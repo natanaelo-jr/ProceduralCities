@@ -15,9 +15,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-add_library(glad STATIC src/glad.c)
+add_library(glad STATIC src/Core/glad.c)
 set_target_properties(glad PROPERTIES LINKER_LANGUAGE C)
-target_include_directories(glad PUBLIC include)
+target_include_directories(glad PUBLIC src)
 
 # Flags extras para NVCC
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra,-Wpedantic")
@@ -63,5 +63,5 @@ target_link_libraries(CityGen
         OpenMP::OpenMP_CXX
 )
 
-target_include_directories(CityGen PRIVATE include /usr/include/glm)
+target_include_directories(CityGen PRIVATE src include /usr/include/glm)
 

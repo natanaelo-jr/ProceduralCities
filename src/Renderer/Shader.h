@@ -1,6 +1,6 @@
 #pragma once
 
-#include "config.h"
+#include "Core/config.h"
 
 namespace Shader {
 GLuint compileShader(const std::string &source, GLenum shaderType);

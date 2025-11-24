@@ -1,6 +1,6 @@
 #pragma once
 
-#include "config.h"
+#include "Core/config.h"
 #include <cstdint>
 
 class Mesh {

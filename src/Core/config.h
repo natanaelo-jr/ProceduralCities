@@ -19,8 +19,11 @@
 #include "backends/imgui_impl_opengl3.h"
 #include "imgui.h"
 
-#include "Mesh.h"
-#include "Texture.h"
+#include "Renderer/Mesh.h"
+#include "Renderer/Texture.h"
+
+#include <omp.h>
+#include <thread>
 
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600

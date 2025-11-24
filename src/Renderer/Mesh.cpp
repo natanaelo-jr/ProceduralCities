@@ -1,4 +1,4 @@
-#include "Mesh.h"
+#include "Renderer/Mesh.h"
 
 // Construtor
 Mesh::Mesh(const std::vector<float> &vertices, const std::vector<unsigned> &ids,
