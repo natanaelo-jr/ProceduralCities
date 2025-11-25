@@ -89,8 +89,6 @@ void Window::pollEvents(GLuint &shaderProgram, const std::vector<Mesh> &meshes, 
   lastX = width / 2.0f;
   lastY = height / 2.0f;
 
-  GLuint mvpLoc = glGetUniformLocation(shaderProgram, "MVP");
-
   // Controle de DeltaTime (para movimento suave)
   float deltaTime = 0.0f;
   float lastFrame = 0.0f;
@@ -149,28 +147,29 @@ void Window::pollEvents(GLuint &shaderProgram, const std::vector<Mesh> &meshes, 
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Matrizes
-    glm::mat4 projection =
-        glm::perspective(glm::radians(camera.Zoom), (float) width / (float) height, 0.1f, 10000.0f);
-    glm::mat4 view = camera.GetViewMatrix();
-    glm::mat4 model = glm::mat4(1.0f);
-
-    glm::mat4 MVP = projection * view * model;
-
-    // Desenho
     glUseProgram(shaderProgram);
-    glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, &MVP[0][0]);
 
+    // 2. Calcular Matrizes Individuais
+    glm::mat4 projection =
+        glm::perspective(glm::radians(camera.Zoom), (float) width / (float) height, 1.0f,
+                         5000.0f);  // Far plane aumentado para 5000
+    glm::mat4 view = camera.GetViewMatrix();
+    glm::mat4 model = glm::mat4(1.0f);  // Identidade (Cidade na origem 0,0,0)
+
+    // 3. Enviar para o Shader (Use os nomes exatos do vertex.glsl!)
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE,
+                       &projection[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, &view[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, &model[0][0]);
     for (auto &mesh : meshes) {
       mesh.draw();
     }
-
-    // ... ImGui rendering se quiser ...
 
     glfwSwapBuffers(window);
     glfwPollEvents();
   }
 }
+
 void Window::framebuffer_size_callback(GLFWwindow *win, int w, int h) {
   glViewport(0, 0, w, h);
 

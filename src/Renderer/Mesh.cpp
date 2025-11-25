@@ -1,8 +1,8 @@
 #include "Renderer/Mesh.h"
 
 // Construtor
-Mesh::Mesh(const std::vector<float> &vertices, const std::vector<unsigned> &ids,
-           uint16_t dim, GLuint textureID, GLenum primType)
+Mesh::Mesh(const std::vector<float> &vertices, const std::vector<unsigned> &ids, uint16_t dim,
+           GLuint textureID, GLenum primType)
     : TextureID(textureID), VAO(0), VBO(0), EBO(0), primitiveType(primType) {
   dimension = dim;
   indexCount = ids.size();
@@ -17,22 +17,25 @@ Mesh::Mesh(const std::vector<float> &vertices, const std::vector<unsigned> &ids,
 
   // vbo
   glBindBuffer(GL_ARRAY_BUFFER, VBO);
-  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float),
-               vertices.data(), GL_STATIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
   // ebo
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, ids.size() * sizeof(unsigned),
-               ids.data(), GL_STATIC_DRAW);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, ids.size() * sizeof(unsigned), ids.data(), GL_STATIC_DRAW);
+
+  GLsizei stride = dimension * sizeof(float);
 
   // pos
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void *)0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *) 0);
   glEnableVertexAttribArray(0);
 
-  // color
-  glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float),
-                        (void *)(3 * sizeof(float)));
+  // normal
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void *) (3 * sizeof(float)));
   glEnableVertexAttribArray(1);
+
+  // color
+  glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, (void *) (6 * sizeof(float)));
+  glEnableVertexAttribArray(2);
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -54,9 +57,13 @@ void Mesh::draw() const {
 }
 
 Mesh::Mesh(Mesh &&other) noexcept
-    : VAO(other.VAO), VBO(other.VBO), EBO(other.EBO),
-      indexCount(other.indexCount), vertexCount(other.vertexCount),
-      dimension(other.dimension), TextureID(other.TextureID),
+    : VAO(other.VAO),
+      VBO(other.VBO),
+      EBO(other.EBO),
+      indexCount(other.indexCount),
+      vertexCount(other.vertexCount),
+      dimension(other.dimension),
+      TextureID(other.TextureID),
       primitiveType(other.primitiveType) {
   other.VAO = 0;
   other.VBO = 0;
@@ -67,7 +74,7 @@ Mesh::Mesh(Mesh &&other) noexcept
 }
 
 Mesh &Mesh::operator=(Mesh &&other) noexcept {
-  if (this != &other) { // Evita auto-atribuição
+  if (this != &other) {  // Evita auto-atribuição
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
     glDeleteBuffers(1, &EBO);

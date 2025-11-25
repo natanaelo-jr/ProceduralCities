@@ -1,61 +1,65 @@
 #pragma once
 
-#include <algorithm>
-#include <random>
-#include <unordered_map>
+#include <glm/glm.hpp>
+#include <mutex>  // Necessário para inserção segura em paralelo
+#include <vector>
 
-#include "Core/config.h"
-#include "Core/helpers.h"
-#include "FastNoiseLite.h"
+// Define tipos de rua para variar a largura na renderização
+enum StreetType {
+  STREET,   // Rua local (estreita)
+  HIGHWAY,  // Avenida principal (larga)
+};
 
-enum StreetType { HIGHWAY, STREET };
-
-class StreetNode {
- public:
-  glm::vec2 position;
+struct StreetNode {
+  glm::vec3 position;  // Agora é vec3 para incluir a altura (relevo)
   int id;
-  bool isIntersection;
-  StreetNode(glm::vec2 pos, int identifier, bool intersection);
-  StreetNode() : position(0.0f, 0.0f), id(-1), isIntersection(false) {}
+
+  // Construtor simples
+  StreetNode(glm::vec3 pos, int identifier) : position(pos), id(identifier) {}
+  StreetNode() : position(0.0f), id(-1) {}
 };
-class StreetEdge {
- public:
-  int from, to;
-  std::vector<glm::vec2> curves;
-  float length;
-  StreetEdge(int fromNode, int toNode, const std::vector<glm::vec2> &curvePoints, float len,
-             StreetType type);
-  StreetType type;
+
+struct StreetEdge {
+  int from, to;     // Índices no vetor de nodes
+  StreetType type;  // Tipo da rua
+
+  StreetEdge(int f, int t, StreetType type) : from(f), to(t), type(type) {}
 };
+
 class StreetGraph {
-  float desiredBlockLength = DEFAULT_DESIRED_BLOCK_LENGTH;
-  float neighborhoodSize = DEFAULT_NEIGHBORHOOD_SIZE;
-  FastNoiseLite myNoise;
+ private:
   std::vector<StreetNode> nodes;
   std::vector<StreetEdge> edges;
-  float cellSize;
-  std::unordered_map<int64_t, std::vector<int>> spatialHash;
-  int64_t computeHashKey(int x, int y) const;
-  void insertNodeToSpatialHash(int nodeId, const glm::vec2 &position);
-  std::vector<int> queryNearbyNodes(const glm::vec2 &position);
-  glm::vec2 getNeighborhoodMainTangent(const glm::vec2 &pos);
-  std::pair<int, float> closestNodeInfo(const glm::vec2 &pos);
-  void remapEdgeEndpoints(int oldNodeId, int newNodeId, std::vector<StreetEdge> &targetEdges);
+
+  std::mutex graphMutex;
 
  public:
-  StreetGraph();
-  float getDensity(const glm::vec2 &position);
-  void generateInitialStreets(int iterations, float step);
-  void printGraphInfo();
-  const std::vector<StreetEdge> &getSegments() const {
+  StreetGraph() = default;
+
+  void clear() {
+    nodes.clear();
+    edges.clear();
+  }
+
+  int addNode(const glm::vec3& pos) {
+    nodes.emplace_back(pos, (int) nodes.size());
+    return (int) nodes.size() - 1;
+  }
+
+  void addStreetSegment(const glm::vec3& start, const glm::vec3& end, StreetType type);
+
+  void setNodes(const std::vector<StreetNode>& newNodes) {
+    nodes = newNodes;
+  }
+
+  void addEdgeByIndex(int fromIndex, int toIndex, StreetType type) {
+    edges.emplace_back(fromIndex, toIndex, type);
+  }
+
+  const std::vector<StreetEdge>& getSegments() const {
     return edges;
   }
-  const std::vector<StreetNode> &getNodes() const {
+  const std::vector<StreetNode>& getNodes() const {
     return nodes;
   }
-  void mergeCloseNodes(float threshold = DEFAULT_MERGE_THRESHOLD);
-  void connectDeadEnds(float maxLength = DEFAULT_MAX_DEAD_END_LENGTH);
-  bool isPathClear(const glm::vec2 &start, const glm::vec2 &end, float minSpacing, int ignoreNodeId,
-                   const std::vector<StreetEdge> &currentEdges);
-  glm::vec2 getFlowDirection(const glm::vec2 &startPos);
 };
