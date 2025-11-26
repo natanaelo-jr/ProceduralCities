@@ -103,40 +103,34 @@ void City::generateCityLayout(int streetIterations, float streetStep) {
   int nodesY = gridSizeY + 1;  // Quantidade de vértices no eixo Y (Stride)
 
   // Redimensiona o cache de nós
-  int numNodes = (gridSizeX + 1) * (gridSizeY + 1);
+  int numNodes = nodesX * nodesY;
   gridNodes.resize(numNodes);
   occupancyGrid.assign(numNodes, 0);
 
   // Limpa grafo anterior
   streets.clear();
 
-// -----------------------------------------------------
-// PASSO 1: CALCULAR VÉRTICES (Totalmente Paralelo)
-// Calcula posição e altura de cada cruzamento potencial
-// -----------------------------------------------------
+  // -----------------------------------------------------
+  // PASSO 1: CALCULAR VÉRTICES (Totalmente Paralelo)
+  // -----------------------------------------------------
 #pragma omp parallel for
   for (int i = 0; i <= gridSizeX; ++i) {
     for (int j = 0; j <= gridSizeY; ++j) {
-      // Posição 2D no plano
       float x = (i * streetStep) - halfSizeX;
-      float z = (j * streetStep) - halfSizeY;  // Z é profundidade
+      float z = (j * streetStep) - halfSizeY;
 
-      // Altura via Noise
       float height = getReliefHeight({x, z});
-
-      // Normaliza noise para checagem de água (-1 a 1)
       float rawNoise = height / HEIGHT_SCALE;
+
       bool isWater = (rawNoise < WATER_LEVEL);
 
-      // Armazena no array linear
-      int idx = i * (gridSizeY + 1) + j;
+      int idx = i * nodesY + j;
       gridNodes[idx].position = glm::vec3(x, height, z);
       gridNodes[idx].isWater = isWater;
     }
   }
 
-  // Passa os nós brutos para o grafo (para renderização de debug/pontos)
-  // Precisamos converter TerrainNode para StreetNode
+  // Passa para o grafo
   std::vector<StreetNode> graphNodes(numNodes);
 #pragma omp parallel for
   for (int i = 0; i < numNodes; ++i) {
@@ -144,18 +138,24 @@ void City::generateCityLayout(int streetIterations, float streetStep) {
   }
   streets.setNodes(graphNodes);
 
-// -----------------------------------------------------
-// PASSO 2: CONECTAR RUAS (Topologia + Regras)
-// -----------------------------------------------------
-// Usamos collapse(2) para juntar os loops i e j em um pool de threads único
+  // -----------------------------------------------------
+  // THREAD BUFFERS (arestas + ocupação)
+  // -----------------------------------------------------
+  int maxThreads = omp_get_max_threads();
+  std::vector<std::vector<StreetEdge>> threadEdges(maxThreads);
+  std::vector<std::vector<int>> threadOccupancy(maxThreads);
+
+  // -----------------------------------------------------
+  // PASSO 2: CONECTAR RUAS
+  // -----------------------------------------------------
 #pragma omp parallel for collapse(2)
   for (int i = 0; i < gridSizeX; ++i) {
     for (int j = 0; j < gridSizeY; ++j) {
-      // 1. Defina o tamanho do passo base (padrão = 1)
+      int tid = omp_get_thread_num();
+
       int stepI = 1;
       int stepJ = 1;
 
-      // Recupera a zona deste ponto
       int currentIdx = i * nodesY + j;
       const TerrainNode& currentNode = gridNodes[currentIdx];
       if (currentNode.isWater)
@@ -164,10 +164,7 @@ void City::generateCityLayout(int streetIterations, float streetStep) {
       glm::vec2 pos2D(currentNode.position.x, currentNode.position.z);
       const CityZone& zone = getZoneAt(pos2D);
 
-      // --- LÓGICA DE DENSIDADE ---
-      // Se for Industrial, queremos blocos 2x maiores.
-      // Se for Parque, queremos blocos 4x maiores (ou nenhum).
-
+      // Lógica de densidade
       if (zone.type == INDUSTRIAL) {
         stepI = 2;
         stepJ = 2;
@@ -176,21 +173,13 @@ void City::generateCityLayout(int streetIterations, float streetStep) {
         stepJ = 4;
       }
 
-      // Filtro de início: Só processa se estivermos no "começo" de um bloco grande
-      // Ex: Se o passo é 2, só processamos 0, 2, 4... (Ignoramos 1, 3, 5 aqui)
       if (i % stepI != 0 || j % stepJ != 0)
         continue;
 
-      // ------------------------------------------
-
-      // Só é Highway Horizontal se a LINHA (j) for múltipla de 20
       StreetType typeRight = (j % 20 == 0) ? HIGHWAY : STREET;
-
-      // Só é Highway Vertical se a COLUNA (i) for múltipla de 20
       StreetType typeUp = (i % 20 == 0) ? HIGHWAY : STREET;
 
-      // --- Conexão Direita (i + stepI) ---
-      // Agora conectamos i com i+2 (pulando o i+1)
+      // Conexão Direita
       if (i + stepI < nodesX) {
         int targetI = i + stepI;
         int rightIdx = targetI * nodesY + j;
@@ -198,20 +187,18 @@ void City::generateCityLayout(int streetIterations, float streetStep) {
 
         if (!rightNode.isWater && currentNode.position.y >= MIN_ROAD_Y &&
             rightNode.position.y >= MIN_ROAD_Y) {
-          // Checa inclinação considerando a distância maior!
-          float dist = streetStep * stepI;  // Distância real
-          float dy = std::abs(rightNode.position.y - currentNode.position.y);
+          float dist = streetStep * stepI;
+          float dy = fabs(rightNode.position.y - currentNode.position.y);
           float slope = dy / dist;
 
           if (slope < MAX_STREET_SLOPE) {
-#pragma omp critical
-            { streets.addEdgeByIndex(currentIdx, rightIdx, typeRight); }
-            occupancyGrid[rightIdx] = 1;
+            threadEdges[tid].push_back(StreetEdge(currentIdx, rightIdx, typeRight));
+            threadOccupancy[tid].push_back(rightIdx);
           }
         }
       }
 
-      // --- Conexão Cima (j + stepJ) ---
+      // Conexão Cima
       if (j + stepJ < nodesY) {
         int targetJ = j + stepJ;
         int upIdx = i * nodesY + targetJ;
@@ -220,22 +207,46 @@ void City::generateCityLayout(int streetIterations, float streetStep) {
         if (!upNode.isWater && currentNode.position.y >= MIN_ROAD_Y &&
             upNode.position.y >= MIN_ROAD_Y) {
           float dist = streetStep * stepJ;
-          float dy = std::abs(upNode.position.y - currentNode.position.y);
+          float dy = fabs(upNode.position.y - currentNode.position.y);
           float slope = dy / dist;
 
           if (slope < MAX_STREET_SLOPE) {
-#pragma omp critical
-            { streets.addEdgeByIndex(currentIdx, upIdx, typeUp); }
-
-            occupancyGrid[currentIdx] = 1;
+            threadEdges[tid].push_back(StreetEdge(currentIdx, upIdx, typeUp));
+            threadOccupancy[tid].push_back(currentIdx);
           }
         }
       }
     }
   }
-}
 
-// Helper para checar se uma quadra toca na água
+  // -----------------------------------------------------
+  // MERGE FINAL — deterministic merge
+  // -----------------------------------------------------
+
+  // Arestas
+  size_t totalEdges = 0;
+  for (auto& v : threadEdges) totalEdges += v.size();
+
+  std::vector<StreetEdge> mergedEdges;
+  mergedEdges.reserve(totalEdges);
+
+  for (auto& v : threadEdges) mergedEdges.insert(mergedEdges.end(), v.begin(), v.end());
+
+  // Ordenação para determinismo
+  std::sort(mergedEdges.begin(), mergedEdges.end(), [](const StreetEdge& a, const StreetEdge& b) {
+    if (a.from != b.from)
+      return a.from < b.from;
+    if (a.to != b.to)
+      return a.to < b.to;
+    return a.type < b.type;
+  });
+
+  streets.setEdges(mergedEdges);
+
+  // Ocupação
+  for (auto& v : threadOccupancy)
+    for (int idx : v) occupancyGrid[idx] = 1;
+}  // Helper para checar se uma quadra toca na água
 bool isBlockOnWater(const std::vector<TerrainNode>& nodes, int tl, int tr, int bl, int br) {
   // Checa se ALGUM dos 4 cantos é água (seja estrito para evitar prédios flutuando na praia)
   if (nodes[tl].isWater || nodes[tr].isWater || nodes[bl].isWater || nodes[br].isWater)
@@ -262,13 +273,23 @@ std::vector<BuildingData> City::generateBuildings() {
   const float waterMinY = (WATER_LEVEL * HEIGHT_SCALE) + 1.0f;
   const float maxSlope = 12.0f;
 
+  int width = gridSizeY + 1;
+
+  // ------------------------------------------------------------
+  //   BUFFERS POR THREAD
+  // ------------------------------------------------------------
+  int maxThreads = omp_get_max_threads();
+  std::vector<std::vector<BuildingData>> threadBuffers(maxThreads);
+
 #pragma omp parallel for
   for (int i = 0; i < cellsX; ++i) {
     for (int j = 0; j < cellsY; ++j) {
-      // 1) Descobrir passo da zona (igual às ruas)
-      int idxTL_temp = i * (gridSizeY + 1) + j;
-      glm::vec3 pTL_temp = gridNodes[idxTL_temp].position;
+      int tid = omp_get_thread_num();
+      auto& local = threadBuffers[tid];
 
+      // 1) Zona
+      int idxTL_temp = i * width + j;
+      glm::vec3 pTL_temp = gridNodes[idxTL_temp].position;
       const CityZone& zone = getZoneAt({pTL_temp.x, pTL_temp.z});
 
       int stepI = 1;
@@ -281,13 +302,10 @@ std::vector<BuildingData> City::generateBuildings() {
         stepJ = 4;
       }
 
-      // Deve criar prédios apenas no início do super-bloco
       if (i % stepI != 0 || j % stepJ != 0)
         continue;
 
-      // 2) Calcular cantos do super-bloco
-      int width = gridSizeY + 1;
-
+      // 2) Cálculo dos vértices do super-bloco
       if ((i + stepI) > cellsX || (j + stepJ) > cellsY)
         continue;
 
@@ -299,24 +317,21 @@ std::vector<BuildingData> City::generateBuildings() {
       if (br >= (int) gridNodes.size())
         continue;
 
-      // 3) Checagem de água no super-bloco
+      // 3) Água
       if (isBlockOnWater(gridNodes, tl, tr, bl, br))
         continue;
 
-      // Zonas de PARK não geram prédios
       if (zone.type == PARK)
         continue;
 
-      // 4) Divisão em sub-blocos
-      float rndSplit = randomHash(i, j, seed + 10);
-
+      // 4) Subdivisões
       float currentBlockSizeX = baseStepSize * stepI;
       float currentBlockSizeZ = baseStepSize * stepJ;
-
       glm::vec3 pTL = gridNodes[tl].position;
 
-      int subdivisions = 1;
+      float rndSplit = randomHash(i, j, seed + 10);
 
+      int subdivisions = 1;
       if (zone.type == RESIDENTIAL) {
         if (rndSplit > 0.60f)
           subdivisions = 2;
@@ -330,16 +345,14 @@ std::vector<BuildingData> City::generateBuildings() {
         if (stepI > 1)
           subdivisions = stepI;
       } else if (zone.type == INDUSTRIAL) {
-        subdivisions = 1;  // galpão grande
+        subdivisions = 1;
       }
 
       float subCellX = currentBlockSizeX / float(subdivisions);
       float subCellZ = currentBlockSizeZ / float(subdivisions);
       float avgSub = 0.5f * (subCellX + subCellZ);
 
-      // ----------------------------
-      //    LOOP DE SUBPRÉDIOS
-      // ----------------------------
+      // LOOP DE SUBPRÉDIOS
       for (int sx = 0; sx < subdivisions; sx++) {
         for (int sy = 0; sy < subdivisions; sy++) {
           float x0 = pTL.x + sx * subCellX;
@@ -347,7 +360,6 @@ std::vector<BuildingData> City::generateBuildings() {
           float x1 = x0 + subCellX;
           float z1 = z0 + subCellZ;
 
-          // 1) Fundação
           float h1 = getReliefHeight({x0, z0});
           float h2 = getReliefHeight({x1, z0});
           float h3 = getReliefHeight({x0, z1});
@@ -361,15 +373,13 @@ std::vector<BuildingData> City::generateBuildings() {
           if (minH < waterMinY)
             continue;
 
-          // 2) Hashes
           int subKey = i * 1234 + j * 56 + sx * 7 + sy;
           float rndH = randomHash(subKey, 1, seed);
           float rndW = randomHash(subKey, 2, seed);
           float rndC = randomHash(subKey, 3, seed);
 
-          // 3) Definição do prédio
           float width = avgSub * 0.8f;
-          float height = 0;
+          float height;
           glm::vec3 color{1.0f};
 
           if (zone.type == COMMERCIAL) {
@@ -380,7 +390,7 @@ std::vector<BuildingData> City::generateBuildings() {
           } else if (zone.type == INDUSTRIAL) {
             height = 15.0f + rndH * 15.0f;
             width = avgSub * (0.95f + rndW * 0.1f);
-            color = glm::vec3(0.28f + rndC * 0.05f, 0.28f + rndC * 0.05f, 0.28f + rndC * 0.05f);
+            color = glm::vec3(0.28f + rndC * 0.05f);
           } else {  // RESIDENTIAL
             if (subdivisions > 1 || stepI > 1) {
               height = 12.0f + rndH * 12.0f;
@@ -392,7 +402,6 @@ std::vector<BuildingData> City::generateBuildings() {
             }
           }
 
-          // 4) Fundação e posicionamento
           float foundation = maxH - minH;
           float finalHeight = std::max(height, foundation + 4.0f);
           float centerY = minH + finalHeight * 0.5f;
@@ -403,13 +412,54 @@ std::vector<BuildingData> City::generateBuildings() {
           b.scale = glm::vec3(width, finalHeight, width);
           b.color = color;
 
-#pragma omp critical
-          buildings.push_back(b);
+          local.push_back(b);
         }
       }
     }
   }
 
+  // ------------------------------------------------------------
+  //   MERGE FINAL
+  // ------------------------------------------------------------
+  size_t total = 0;
+  for (auto& v : threadBuffers) total += v.size();
+
+  buildings.clear();
+  buildings.reserve(total);
+
+  for (auto& v : threadBuffers) buildings.insert(buildings.end(), v.begin(), v.end());
+
+  // Ordenação opcional para determinismo:
+  std::sort(buildings.begin(), buildings.end(), [](auto& a, auto& b) {
+    if (a.position.x != b.position.x)
+      return a.position.x < b.position.x;
+    if (a.position.z != b.position.z)
+      return a.position.z < b.position.z;
+    return a.position.y < b.position.y;
+  });
+
   this->buildings = buildings;
   return buildings;
+}
+
+// City.cpp
+std::vector<BuildingData> City::generateBuildingsCUDA() {
+  // Estimativa de tamanho máximo para o vetor de saída
+  int maxCapacity = gridSizeX * gridSizeY * 9;
+  std::vector<BuildingData> resultBuffer(maxCapacity);
+  int totalCount = 0;
+
+  const float waterMinY = (WATER_LEVEL * HEIGHT_SCALE) + 1.0f;
+
+  // CHAMA A GPU
+  launchBuildingGenerationKernel(gridNodes.data(),  // Passa o array cru do vector
+                                 zones.data(), zones.size(),
+                                 resultBuffer.data(),  // Escreve direto no buffer do vector
+                                 &totalCount, gridSizeX, gridSizeY, mapSize, waterMinY, seed);
+
+  // Ajusta o tamanho final do vector para o que realmente foi gerado
+  resultBuffer.resize(totalCount);
+
+  this->buildings = resultBuffer;
+  return resultBuffer;
 }

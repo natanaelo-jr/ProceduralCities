@@ -26,17 +26,18 @@ int main(int argc, char** argv) {
   std::string fragSrc = Shader::loadShaderSource("shaders/colorShader/fragment.glsl");
   GLuint shaderProgram = Shader::createShaderProgram(vertSrc, fragSrc);
 
-  float MAP_SIZE = 4000.0f;
+  float MAP_SIZE = 10000.0f;
   float BLOCK_SIZE = DEFAULT_DESIRED_BLOCK_LENGTH;
+  int ZONES = 40;
 
   std::random_device rd;
   int seed = rd();
 
   // 3. Geração da Cidade
-  City city(MAP_SIZE, seed);  // Tamanho 4000, Seed 12345
-  city.generateZones(20);
+  City city(MAP_SIZE, seed);
+  city.generateZones(ZONES);
   city.generateCityLayout((int) MAP_SIZE / BLOCK_SIZE, BLOCK_SIZE);
-  city.generateBuildings();
+  city.generateBuildingsCUDA();
 
   std::vector<Mesh> meshes;
   meshes.push_back(generateZoneMesh(city, MAP_SIZE, 10.0f));

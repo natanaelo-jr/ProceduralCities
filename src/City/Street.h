@@ -52,6 +52,10 @@ class StreetGraph {
     nodes = newNodes;
   }
 
+  void setEdges(const std::vector<StreetEdge>& newEdges) {
+    edges = newEdges;
+  }
+
   void addEdgeByIndex(int fromIndex, int toIndex, StreetType type) {
     edges.emplace_back(fromIndex, toIndex, type);
   }

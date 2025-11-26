@@ -8,11 +8,6 @@
 #include "FastNoiseLite.h"
 #include "Street.h"
 
-struct TerrainNode {
-  glm::vec3 position;
-  bool isWater;
-};
-
 class City {
  private:
   int seed = 0;
@@ -37,6 +32,7 @@ class City {
 
  public:
   std::vector<BuildingData> generateBuildings();
+  std::vector<BuildingData> generateBuildingsCUDA();
 
   City(float mapSize = 4000.0f, int seed = 0);
 

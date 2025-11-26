@@ -144,7 +144,7 @@ void Window::pollEvents(GLuint &shaderProgram, const std::vector<Mesh> &meshes, 
       if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         camera.ProcessKeyboard(DOWN, deltaTime);
     }  // --- RENDER ---
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+    glClearColor(0.4f, 0.3f, 0.5f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glUseProgram(shaderProgram);
@@ -161,6 +161,8 @@ void Window::pollEvents(GLuint &shaderProgram, const std::vector<Mesh> &meshes, 
                        &projection[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, &view[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, &model[0][0]);
+
+    glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, &camera.Position[0]);
     for (auto &mesh : meshes) {
       mesh.draw();
     }
